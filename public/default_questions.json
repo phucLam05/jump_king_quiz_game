@@ -1,0 +1,32 @@
+[
+  {
+    "question": "Kết quả của phép tính: 2 + 2 * 2 = ?",
+    "answers": ["8", "6", "4", "2"],
+    "correct": 1
+  },
+  {
+    "question": "Đâu KHÔNG phải là một kiểu dữ liệu nguyên thủy trong JavaScript?",
+    "answers": ["String", "Number", "Array", "Boolean"],
+    "correct": 2
+  },
+  {
+    "question": "Phaser 3 hỗ trợ các hệ thống vật lý mặc định nào?",
+    "answers": ["Arcade, Matter, Impact", "Box2D, Ammo, PhysX", "P2, Oimo, Cannon", "Havok, Rapier, Jolt"],
+    "correct": 0
+  },
+  {
+    "question": "Trong React, Hook nào được dùng để thực hiện side effects?",
+    "answers": ["useState", "useContext", "useEffect", "useMemo"],
+    "correct": 2
+  },
+  {
+    "question": "Thời gian phản hồi (latency) của WebSocket so với HTTP thông thường thế nào?",
+    "answers": ["Nhanh hơn đáng kể nhờ giữ kết nối liên tục", "Chậm hơn do cơ chế handshake phức tạp", "Bằng nhau vì cùng chạy trên nền TCP", "Không thể so sánh được"],
+    "correct": 0
+  },
+  {
+    "question": "Lệnh Git nào dùng để gộp các commit nhỏ thành một commit duy nhất?",
+    "answers": ["git merge --squash", "git rebase -i", "git cherry-pick", "Cả A và B đều đúng"],
+    "correct": 3
+  }
+]
