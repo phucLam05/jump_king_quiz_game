@@ -318,7 +318,7 @@ export default function App() {
         }
       } else {
         // Room deleted
-        if (screenRef.current !== 'home') {
+        if (screenRef.current === 'lobby' || screenRef.current === 'playing' || screenRef.current === 'ended') {
           handleLeaveRoom();
           setErrorMsg('Phòng đã bị Host giải tán.');
         }

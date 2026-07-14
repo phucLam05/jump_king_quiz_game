@@ -18,18 +18,23 @@ import { PlayerState, RoomConfig } from './types';
 
 // Check if environment variables are configured in the .env file
 const getEnvFirebaseConfig = () => {
-  const apiKey = import.meta.env.VITE_FIREBASE_API_KEY;
-  const databaseURL = import.meta.env.VITE_FIREBASE_DATABASE_URL;
+  const sanitize = (val: any): string => {
+    if (typeof val !== 'string') return '';
+    return val.replace(/^["']|["']$/g, '').trim();
+  };
+
+  const apiKey = sanitize(import.meta.env.VITE_FIREBASE_API_KEY);
+  const databaseURL = sanitize(import.meta.env.VITE_FIREBASE_DATABASE_URL);
   
   if (apiKey && apiKey !== "YOUR_API_KEY_HERE" && databaseURL && !databaseURL.includes("YOUR_PROJECT_ID")) {
     return {
       apiKey: apiKey,
-      authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+      authDomain: sanitize(import.meta.env.VITE_FIREBASE_AUTH_DOMAIN),
       databaseURL: databaseURL,
-      projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-      storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-      messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-      appId: import.meta.env.VITE_FIREBASE_APP_ID
+      projectId: sanitize(import.meta.env.VITE_FIREBASE_PROJECT_ID),
+      storageBucket: sanitize(import.meta.env.VITE_FIREBASE_STORAGE_BUCKET),
+      messagingSenderId: sanitize(import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID),
+      appId: sanitize(import.meta.env.VITE_FIREBASE_APP_ID)
     };
   }
   return null;
