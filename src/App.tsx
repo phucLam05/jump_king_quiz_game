@@ -100,6 +100,11 @@ export default function App() {
   // Checkpoint Quiz States
   const [checkpointQuizOpen, setCheckpointQuizOpen] = useState(false);
   const [quizCheckpointId, setQuizCheckpointId] = useState<number>(-1);
+
+  // Flight Quiz States
+  const [flightQuizOpen, setFlightQuizOpen] = useState(false);
+  const [flightQuizQuestion, setFlightQuizQuestion] = useState<Question | null>(null);
+
   const [fallQuote, setFallQuote] = useState<string | null>(null);
 
   useEffect(() => {
@@ -451,7 +456,8 @@ export default function App() {
       onReachCheckpoint: (id: number) => handleReachCheckpoint(id),
       onReachGoal: () => handleReachGoal(),
       onPositionUpdate: (pos: any) => handlePositionUpdate(pos),
-      onHostCameraUpdate: (cx: number, cy: number) => {}
+      onHostCameraUpdate: (cx: number, cy: number) => {},
+      onOverlapFlightItem: () => handleOverlapFlightItem()
     });
 
     setPhaserGame(game);
@@ -473,22 +479,26 @@ export default function App() {
 
   // --- HOST ACTIONS ---
 
-  const handleLoadDefaultQuestions = async () => {
+  const handleSelectSampleQuestions = async (filename: string) => {
+    if (!filename) return;
     try {
-      const res = await fetch('/default_questions.json');
+      const res = await fetch(`/${filename}`);
       const data = await res.json();
       setQuestionsBank(data);
-      setQuestionsFilename('default_questions.json (Sẵn có)');
+      setQuestionsFilename(filename === 'default_questions.json' ? 'Mặc định (2 câu)' : 'Kinh tế chính trị Mác - Lênin (20 câu)');
+      setErrorMsg('');
     } catch (err) {
-      console.error("Failed to load default questions", err);
+      console.error("Failed to load sample questions", err);
+      setErrorMsg(`Không thể tải bộ câu hỏi mẫu ${filename}: ${err}`);
       // Fallback questions hardcoded
-      const fallback: Question[] = [
-        { question: "2 + 2 = ?", answers: ["3", "4", "5", "6"], correct: 1 },
-        { question: "Thủ đô của Việt Nam là gì?", answers: ["Hồ Chí Minh", "Đà Nẵng", "Hà Nội", "Huế"], correct: 2 },
-        { question: "Trái Đất quay quanh mặt trời mất bao lâu?", answers: ["24 giờ", "30 ngày", "365 ngày", "12 tháng"], correct: 2 }
-      ];
-      setQuestionsBank(fallback);
-      setQuestionsFilename('Câu hỏi mẫu (Tự tạo)');
+      if (filename === 'default_questions.json') {
+        const fallback: Question[] = [
+          { question: "2 + 2 = ?", answers: ["3", "4", "5", "6"], correct: 1 },
+          { question: "Thủ đô của Việt Nam là gì?", answers: ["Hồ Chí Minh", "Đà Nẵng", "Hà Nội", "Huế"], correct: 2 }
+        ];
+        setQuestionsBank(fallback);
+        setQuestionsFilename('default_questions.json (Fallback)');
+      }
     }
   };
 
@@ -556,7 +566,8 @@ export default function App() {
       color: playerColor,
       isHost: true,
       lastActive: Date.now(),
-      coins: 0
+      coins: 0,
+      shoeLevel: 1
     };
 
     const config: RoomConfig = {
@@ -629,7 +640,7 @@ export default function App() {
         isFinished: false,
         finishTime: 0,
         coins: 0,
-        shoeLevel: 0,
+        shoeLevel: 1,
         isFlying: false,
         teleportTarget: null
       };
@@ -748,7 +759,8 @@ export default function App() {
         isHost: false,
         lastActive: Date.now(),
         offline: false,
-        coins: 0
+        coins: 0,
+        shoeLevel: 1
       };
 
       try {
@@ -827,16 +839,9 @@ export default function App() {
   const handleUpgradeShoes = () => {
     if (isHost || screen !== 'playing' || hasFinished || !roomId || !playerId) return;
     const currentCoins = playersRef.current[playerId]?.coins || 0;
-    const currentShoeLevel = playersRef.current[playerId]?.shoeLevel || 0;
+    const currentShoeLevel = playersRef.current[playerId]?.shoeLevel !== undefined ? playersRef.current[playerId]?.shoeLevel : 1;
     
-    if (currentShoeLevel === 0 && currentCoins >= 30) {
-      syncService.updatePlayer(roomId, playerId, {
-        coins: currentCoins - 30,
-        shoeLevel: 1
-      });
-      const event = new CustomEvent('shoes_upgraded', { detail: { level: 1 } });
-      window.dispatchEvent(event);
-    } else if (currentShoeLevel === 1 && currentCoins >= 70) {
+    if (currentShoeLevel === 1 && currentCoins >= 70) {
       syncService.updatePlayer(roomId, playerId, {
         coins: currentCoins - 70,
         shoeLevel: 2
@@ -862,6 +867,19 @@ export default function App() {
     }
   };
 
+  const getCheckpointQuestion = () => {
+    if (!roomConfig || !roomConfig.quizData || quizCheckpointId < 0) return null;
+    
+    const activeMapId = roomConfig.mapId || selectedMapId;
+    if (activeMapId === 'goingup') {
+      const targetIndex = quizCheckpointId * 4;
+      return roomConfig.quizData[targetIndex] || null;
+    }
+    
+    // Default: checkpoint ID maps directly to question index
+    return roomConfig.quizData[quizCheckpointId] || null;
+  };
+
   const handleSaveCheckpointSuccess = () => {
     setCheckpointQuizOpen(false);
 
@@ -870,6 +888,43 @@ export default function App() {
       syncService.updatePlayer(roomId, playerId, {
         checkpointId: quizCheckpointId
       });
+    }
+  };
+
+  const handleOverlapFlightItem = () => {
+    if (!roomConfig || !roomConfig.quizData || roomConfig.quizData.length === 0) return;
+    
+    // Exclude checkpoint questions (0, 4, 8, 12)
+    const excludeIndices = [0, 4, 8, 12];
+    const availableQuestions = roomConfig.quizData.filter((_, idx) => !excludeIndices.includes(idx));
+    
+    if (availableQuestions.length === 0) {
+      // Fallback if all are excluded
+      const randIdx = Math.floor(Math.random() * roomConfig.quizData.length);
+      setFlightQuizQuestion(roomConfig.quizData[randIdx]);
+    } else {
+      const randIdx = Math.floor(Math.random() * availableQuestions.length);
+      setFlightQuizQuestion(availableQuestions[randIdx]);
+    }
+    
+    setFlightQuizOpen(true);
+  };
+
+  const handleFlightQuizSuccess = () => {
+    setFlightQuizOpen(false);
+    
+    if (phaserGame && phaserGame.scene.isActive('GameScene')) {
+      const scene = phaserGame.scene.keys['GameScene'] as GameScene;
+      scene.activateFlight(2000); // 2 seconds
+    }
+  };
+
+  const handleFlightQuizFail = () => {
+    setFlightQuizOpen(false);
+    
+    if (phaserGame && phaserGame.scene.isActive('GameScene')) {
+      const scene = phaserGame.scene.keys['GameScene'] as GameScene;
+      scene.freezePlayer(1000); // 1s freeze
     }
   };
 
@@ -940,7 +995,7 @@ export default function App() {
 
   const activePlayerId = isHost ? spectatedPlayerId : playerId;
   const activeCoins = activePlayerId ? (players[activePlayerId]?.coins || 0) : 0;
-  const activeShoeLevel = activePlayerId ? (players[activePlayerId]?.shoeLevel || 0) : 0;
+  const activeShoeLevel = activePlayerId ? (players[activePlayerId]?.shoeLevel !== undefined ? players[activePlayerId].shoeLevel : 1) : 1;
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-brand-dark flex items-center justify-center">
@@ -986,19 +1041,11 @@ export default function App() {
           </div>
 
           {/* Database Info Indicator */}
-          <div className="flex items-center justify-between p-3.5 bg-slate-950/60 rounded-2xl border border-slate-850/80 text-xs text-slate-400">
+          <div className="flex items-center justify-center p-3.5 bg-slate-950/60 rounded-2xl border border-slate-850/80 text-xs text-slate-400">
             <div className="flex items-center gap-2">
               <Database size={15} className={isFirebaseConnected ? "text-emerald-400 animate-pulse" : "text-slate-500"} />
               <span>Kênh: <span className="font-semibold text-slate-200">{isFirebaseConnected ? "Firebase (Internet)" : "Broadcast (Local Multi-Tab)"}</span></span>
             </div>
-            
-            <button
-              onClick={() => setShowSettings(true)}
-              className="flex items-center gap-1 font-bold text-[10px] text-indigo-400 hover:text-indigo-300 bg-indigo-500/10 px-2 py-1 border border-indigo-500/10 rounded-lg transition"
-            >
-              <Settings size={12} />
-              <span>Cấu hình</span>
-            </button>
           </div>
         </div>
       )}
@@ -1074,17 +1121,36 @@ export default function App() {
               </div>
             </div>
 
-            {/* Quiz JSON upload */}
+            {/* Quiz JSON upload & Selection */}
             <div>
               <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">
-                Bộ câu hỏi Checkpoint (.JSON)
+                Bộ câu hỏi Checkpoint
               </label>
               
-              <div className="flex flex-col sm:flex-row gap-3">
+              <div className="space-y-3">
+                {/* Selection Dropdown */}
+                <div>
+                  <select
+                    onChange={(e) => handleSelectSampleQuestions(e.target.value)}
+                    defaultValue=""
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-slate-350 focus:outline-none focus:border-indigo-500 transition font-medium"
+                  >
+                    <option value="" disabled>-- Chọn bộ câu hỏi mẫu sẵn có --</option>
+                    <option value="default_questions.json">Mặc định (2 câu hỏi)</option>
+                    <option value="mln_question.json">Kinh tế chính trị Mác - Lênin (20 câu hỏi)</option>
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-2 text-[10px] text-slate-500 justify-center">
+                  <span className="h-[1px] bg-slate-800 flex-1"></span>
+                  <span>HOẶC TẢI LÊN FILE RIÊNG</span>
+                  <span className="h-[1px] bg-slate-800 flex-1"></span>
+                </div>
+
                 {/* Upload Button */}
-                <label className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl hover:border-slate-700 cursor-pointer text-slate-400 hover:text-slate-200 transition text-xs font-semibold select-none">
+                <label className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl hover:border-slate-700 cursor-pointer text-slate-400 hover:text-slate-200 transition text-xs font-semibold select-none">
                   <Upload size={14} />
-                  <span>{questionsFilename ? "Đổi file JSON" : "Tải file câu hỏi JSON"}</span>
+                  <span>{questionsFilename ? "Đổi file JSON đã tải lên" : "Tải file câu hỏi JSON (.json)"}</span>
                   <input
                     type="file"
                     accept=".json"
@@ -1092,22 +1158,12 @@ export default function App() {
                     className="hidden"
                   />
                 </label>
-
-                {/* Default load button */}
-                <button
-                  type="button"
-                  onClick={handleLoadDefaultQuestions}
-                  className="px-4 py-2.5 bg-indigo-500/10 border border-indigo-500/15 hover:border-indigo-500/35 text-indigo-400 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5"
-                >
-                  <Sparkles size={13} />
-                  <span>Dùng câu hỏi mẫu</span>
-                </button>
               </div>
 
               {questionsFilename && (
-                <div className="mt-2 text-[10px] text-emerald-400 font-semibold flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 block animate-ping" />
-                  <span>Đã nạp: {questionsFilename} ({questionsBank.length} câu hỏi)</span>
+                <div className="mt-2.5 text-[10px] text-emerald-400 font-semibold flex items-center gap-1.5 p-2 bg-emerald-500/5 border border-emerald-500/10 rounded-xl">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 block animate-ping animate-pulse" />
+                  <span>Đã nạp: <span className="underline font-bold text-emerald-300">{questionsFilename}</span> ({questionsBank.length} câu hỏi)</span>
                 </div>
               )}
             </div>
@@ -1426,10 +1482,21 @@ export default function App() {
           {/* Checkpoint Quiz Popup Modal */}
           <QuizPopup
             isOpen={checkpointQuizOpen}
-            question={roomConfig.quizData[quizCheckpointId] || null}
+            question={getCheckpointQuestion()}
             checkpointId={quizCheckpointId}
             onSaveSuccess={handleSaveCheckpointSuccess}
             onClose={() => setCheckpointQuizOpen(false)}
+          />
+
+          {/* Flight Quiz Popup Modal */}
+          <QuizPopup
+            isOpen={flightQuizOpen}
+            question={flightQuizQuestion}
+            checkpointId={-1}
+            mode="fly"
+            onSaveSuccess={handleFlightQuizSuccess}
+            onFail={handleFlightQuizFail}
+            onClose={() => setFlightQuizOpen(false)}
           />
 
           {/* Leaderboard Overlay when holding TAB */}

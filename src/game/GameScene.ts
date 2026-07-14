@@ -35,7 +35,7 @@ export class GameScene extends Phaser.Scene {
   private lastOnGround: boolean = true;
 
   // Shoe Level Variable
-  private shoeLevel: number = 0;
+  private shoeLevel: number = 1;
   private highestYInAir: number = 0;
 
   // Charge Bar Graphic
@@ -67,11 +67,17 @@ export class GameScene extends Phaser.Scene {
   private coinsGroup!: Phaser.Physics.Arcade.StaticGroup;
   private isInvincible: boolean = false;
 
+  // Flight-related elements
+  private flightItemsGroup!: Phaser.Physics.Arcade.StaticGroup;
+  private isLocalFlying: boolean = false;
+  private isLocalFrozen: boolean = false;
+
   // Callbacks to React
   private onReachCheckpoint!: (id: number) => void;
   private onReachGoal!: () => void;
-  private onPositionUpdate!: (state: { x: number; y: number; vx: number; vy: number; height: number }) => void;
+  private onPositionUpdate!: (state: { x: number; y: number; vx: number; vy: number; height: number; isFlying?: boolean }) => void;
   private onHostCameraUpdate!: (x: number, y: number) => void;
+  private onOverlapFlightItem!: () => void;
 
   // State throttle
   private lastUpdateTime: number = 0;
@@ -90,8 +96,9 @@ export class GameScene extends Phaser.Scene {
     isInitiallyPaused?: boolean;
     onReachCheckpoint: (id: number) => void;
     onReachGoal: () => void;
-    onPositionUpdate: (state: { x: number; y: number; vx: number; vy: number; height: number }) => void;
+    onPositionUpdate: (state: { x: number; y: number; vx: number; vy: number; height: number; isFlying?: boolean }) => void;
     onHostCameraUpdate: (x: number, y: number) => void;
+    onOverlapFlightItem?: () => void;
   }) {
     this.playerId = data.playerId;
     this.playerName = data.playerName;
@@ -103,6 +110,7 @@ export class GameScene extends Phaser.Scene {
     this.onReachGoal = data.onReachGoal;
     this.onPositionUpdate = data.onPositionUpdate;
     this.onHostCameraUpdate = data.onHostCameraUpdate;
+    this.onOverlapFlightItem = data.onOverlapFlightItem || (() => {});
 
     this.remotePlayers.clear();
     this.isCharging = false;
@@ -111,8 +119,10 @@ export class GameScene extends Phaser.Scene {
     this.jumpDirection = 0;
     this.spectateTargetId = null;
     this.isInvincible = false;
-    this.shoeLevel = 0;
+    this.shoeLevel = 1;
     this.highestYInAir = 0;
+    this.isLocalFlying = false;
+    this.isLocalFrozen = false;
   }
 
   public preload() {
@@ -331,6 +341,41 @@ export class GameScene extends Phaser.Scene {
       });
     }
 
+    // Create static group for flight items
+    this.flightItemsGroup = this.physics.add.staticGroup();
+
+    // Spawn flight items if defined for this map
+    if (mapConfig.flightItems) {
+      if (!this.textures.exists('flight_item')) {
+        const graphics = this.add.graphics();
+        graphics.fillStyle(0x38bdf8, 1); // Sky blue
+        graphics.fillCircle(8, 8, 7);
+        graphics.lineStyle(1.5, 0xffffff, 1); // White border
+        graphics.strokeCircle(8, 8, 7);
+        graphics.fillStyle(0xffffff, 0.8);
+        // Draw a tiny wing shape
+        graphics.fillRect(4, 7, 8, 2);
+        graphics.fillRect(5, 5, 6, 2);
+        graphics.generateTexture('flight_item', 16, 16);
+        graphics.destroy();
+      }
+
+      mapConfig.flightItems.forEach((pos) => {
+        const item = this.physics.add.staticImage(pos.x, pos.y, 'flight_item');
+        this.flightItemsGroup.add(item);
+        
+        // Add a gentle floating/breathing animation using tweens
+        this.tweens.add({
+          targets: item,
+          y: pos.y - 6,
+          duration: 1000 + Math.random() * 500,
+          yoyo: true,
+          repeat: -1,
+          ease: 'Sine.easeInOut'
+        });
+      });
+    }
+
     // Create controls
     this.cursors = this.input.keyboard!.createCursorKeys();
     this.keys = this.input.keyboard!.addKeys({
@@ -391,6 +436,9 @@ export class GameScene extends Phaser.Scene {
       this.physics.add.overlap(this.localPlayer, this.monstersGroup, this.handleMonsterOverlap, undefined, this);
       this.physics.add.overlap(this.localPlayer, this.goalZone, this.handleGoalOverlap, undefined, this);
       this.physics.add.overlap(this.localPlayer, this.coinsGroup, this.handleCoinOverlap, undefined, this);
+      if (this.flightItemsGroup) {
+        this.physics.add.overlap(this.localPlayer, this.flightItemsGroup, this.handleFlightItemOverlap, undefined, this);
+      }
     }
 
     if (this.isInitiallyPaused) {
@@ -502,6 +550,9 @@ export class GameScene extends Phaser.Scene {
     this.localPlayer.setPosition(x, y - 20); // spawn slightly above platform to avoid clipping
     this.localPlayer.body.reset(x, y - 20);
     this.cameras.main.pan(x, y - 100, 500, 'Power2');
+    
+    // Reset highest Y in air to prevent long fall quote trigger on teleportation
+    this.highestYInAir = y - 20;
   }
 
   // Update list of remote players
@@ -510,7 +561,7 @@ export class GameScene extends Phaser.Scene {
     if (!this.isHost && this.playerId) {
       const myState = players[this.playerId];
       if (myState) {
-        this.shoeLevel = myState.shoeLevel || 0;
+        this.shoeLevel = myState.shoeLevel !== undefined ? myState.shoeLevel : 1;
         
         if (myState.teleportTarget) {
           const target = myState.teleportTarget;
@@ -549,7 +600,7 @@ export class GameScene extends Phaser.Scene {
         remote.nameTag.setVisible(isVisible);
         
         // Update name tag and check if finished
-        const lvSuffix = p.shoeLevel !== undefined ? ` [LV${p.shoeLevel}]` : ' [LV0]';
+        const lvSuffix = p.shoeLevel !== undefined ? ` [LV${p.shoeLevel}]` : ' [LV1]';
         if (p.isFinished) {
           remote.nameTag.setText(`🏁 ${p.name}`);
           remote.nameTag.setColor('#f59e0b');
@@ -557,8 +608,22 @@ export class GameScene extends Phaser.Scene {
           remote.nameTag.setText(`${p.name}${lvSuffix} (${Math.round(p.height)}m)`);
         }
 
-        // Sync visual tint for remote players based on shoeLevel
-        if (p.shoeLevel === 0) {
+        // Sync visual tint for remote players based on shoeLevel and flying status
+        if (p.isFlying) {
+          remote.sprite.setTint(0x38bdf8);
+          remote.sprite.setAlpha(0.85);
+          // Spawn flight sparks
+          if (this.time.now % 10 < 3) {
+            const sparkles = this.add.rectangle(remote.sprite.x + Phaser.Math.Between(-8, 8), remote.sprite.y + 12, 3, 3, 0x38bdf8);
+            this.tweens.add({
+              targets: sparkles,
+              alpha: 0,
+              y: sparkles.y + 10,
+              duration: 300,
+              onComplete: () => sparkles.destroy()
+            });
+          }
+        } else if (p.shoeLevel === 0) {
           remote.sprite.setTint(0x707f94);
           remote.sprite.setAlpha(0.4);
         } else if (p.shoeLevel === 2) {
@@ -571,7 +636,10 @@ export class GameScene extends Phaser.Scene {
       } else {
         // Create new remote player sprite
         const sprite = this.add.sprite(p.x, p.y, 'player_body');
-        if (p.shoeLevel === 0) {
+        if (p.isFlying) {
+          sprite.setTint(0x38bdf8);
+          sprite.setAlpha(0.85);
+        } else if (p.shoeLevel === 0) {
           sprite.setTint(0x707f94);
           sprite.setAlpha(0.4);
         } else if (p.shoeLevel === 2) {
@@ -701,6 +769,9 @@ export class GameScene extends Phaser.Scene {
 
     // Charge bar graphics helper
     this.chargeBar = this.add.graphics();
+    
+    // Initialize highest Y in air to the spawn height to prevent initial fall message
+    this.highestYInAir = y;
   }
 
   private setupHostDragControls() {
@@ -774,6 +845,11 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
+    if (this.isLocalFrozen) {
+      this.localPlayer.setVelocity(0, 0);
+      return;
+    }
+
     // Read virtual inputs from window if joystick/mobile is used
     const mobileInput = (window as any).mobileControls || { left: false, right: false, jump: false };
 
@@ -782,6 +858,39 @@ export class GameScene extends Phaser.Scene {
     const goRight = this.cursors.right?.isDown || this.keys.D?.isDown || mobileInput.right;
     const goUp = this.cursors.up?.isDown || this.keys.W?.isDown;
     const goDown = this.cursors.down?.isDown || this.keys.S?.isDown;
+
+    // Flight controls override
+    if (this.isLocalFlying) {
+      this.isCharging = false;
+      this.chargeTime = 0;
+      this.chargeRatio = 0;
+      this.localPlayer.setScale(1, 1);
+      
+      let vx = 0;
+      let vy = 0;
+      const speed = 250;
+      
+      if (goLeft) vx = -speed;
+      if (goRight) vx = speed;
+      if (goUp) vy = -speed;
+      if (goDown) vy = speed;
+      
+      this.localPlayer.setVelocity(vx, vy);
+      
+      // Spawn nice sparkles while flying
+      if (time % 4 === 0) {
+        const p = this.add.rectangle(this.localPlayer.x + Phaser.Math.Between(-10, 10), this.localPlayer.y + 14, 4, 4, 0x38bdf8);
+        this.tweens.add({
+          targets: p,
+          alpha: 0,
+          y: p.y + 15,
+          duration: 400,
+          onComplete: () => p.destroy()
+        });
+      }
+      return;
+    }
+
     // Lock jump key at Level 0
     const isPressingJump = (this.cursors.space?.isDown || mobileInput.jump) && this.shoeLevel > 0;
 
@@ -1163,7 +1272,8 @@ export class GameScene extends Phaser.Scene {
         vx: this.localPlayer.body.velocity.x,
         vy: this.localPlayer.body.velocity.y,
         height: currentHeight,
-        shoeLevel: this.shoeLevel
+        shoeLevel: this.shoeLevel,
+        isFlying: this.isLocalFlying
       } as any);
       
       this.lastUpdateTime = time;
@@ -1245,5 +1355,87 @@ export class GameScene extends Phaser.Scene {
       }
     });
     window.dispatchEvent(event);
+  }
+
+  private handleFlightItemOverlap(playerObj: any, itemObj: any) {
+    if (this.isHost || !this.localPlayer || !this.localPlayer.active) return;
+    
+    // Disable item temporarily (cooldown)
+    itemObj.setVisible(false);
+    if (itemObj.body) {
+      itemObj.body.enable = false;
+    }
+    
+    // Cooldown 15s to respawn the flight item
+    this.time.delayedCall(15000, () => {
+      if (itemObj && itemObj.scene) {
+        itemObj.setVisible(true);
+        if (itemObj.body) {
+          itemObj.body.enable = true;
+        }
+        
+        // Fade in effect
+        itemObj.alpha = 0;
+        this.tweens.add({
+          targets: itemObj,
+          alpha: 1,
+          duration: 200
+        });
+      }
+    });
+
+    // Call UI callback
+    if (this.onOverlapFlightItem) {
+      this.onOverlapFlightItem();
+    }
+  }
+
+  public activateFlight(duration: number) {
+    if (this.isHost || !this.localPlayer || !this.localPlayer.active) return;
+    
+    this.isLocalFlying = true;
+    this.isLocalFrozen = false; // Flight overrides freeze
+    this.localPlayer.body.setGravityY(0);
+    this.localPlayer.setVelocity(0, 0); // Reset velocity initially
+    
+    // Flash blue/cyan representing flight mode
+    this.tweens.add({
+      targets: this.localPlayer,
+      alpha: 0.5,
+      duration: 100,
+      yoyo: true,
+      repeat: 3
+    });
+    
+    // Set timer to end flight
+    this.time.delayedCall(duration, () => {
+      this.isLocalFlying = false;
+      if (this.localPlayer && this.localPlayer.active) {
+        this.localPlayer.body.setGravityY(1000); // restore snappy gravity
+        this.localPlayer.setAlpha(1);
+        // Reset player color/tint just in case
+        this.localPlayer.setTint(parseInt(this.playerColor.replace('#', '0x'), 16));
+      }
+    });
+  }
+
+  public freezePlayer(duration: number) {
+    if (this.isHost || !this.localPlayer || !this.localPlayer.active) return;
+    if (this.isLocalFlying) return; // Flight mode cannot be frozen
+    
+    this.isLocalFrozen = true;
+    this.localPlayer.setVelocity(0, 0);
+    this.localPlayer.body.setGravityY(0); // float/freeze in place
+    
+    // Tint player red to indicate frozen
+    this.localPlayer.setTint(0xef4444);
+    
+    this.time.delayedCall(duration, () => {
+      this.isLocalFrozen = false;
+      if (this.localPlayer && this.localPlayer.active) {
+        this.localPlayer.body.setGravityY(1000); // restore gravity
+        this.localPlayer.setTint(parseInt(this.playerColor.replace('#', '0x'), 16));
+      }
+    });
   }
 }

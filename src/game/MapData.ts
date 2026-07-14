@@ -262,7 +262,7 @@ export const MAPS: Record<string, MapConfig> = {
 
       // --- TẦNG 2: CẠNH TRANH TƯ BẢN & ĐỘC QUYỀN (y: 1500 - 3500) ---
       // Kim loại, trơn trượt (isSlippery), sụp đổ (isCollapsing) và quái lớn (Tập đoàn độc quyền)
-      { x: 450, y: 3350, width: 130, height: 20, color: "#475569" },
+      { x: 520, y: 3350, width: 130, height: 20, color: "#475569" },
       { x: 250, y: 3200, width: 110, height: 20, color: "#475569", isSlippery: true },
       { x: 550, y: 3050, width: 110, height: 20, color: "#475569", isCollapsing: true },
       { x: 300, y: 2900, width: 120, height: 20, color: "#475569" },
@@ -317,6 +317,14 @@ export const MAPS: Record<string, MapConfig> = {
       { id: 1, x: 400, y: 3465, width: 80, height: 15 },
       { id: 2, x: 680, y: 2415, width: 80, height: 15 },
       { id: 3, x: 250, y: 1515, width: 80, height: 15 }
+    ],
+    flightItems: [
+      { x: 500, y: 4800 },
+      { x: 550, y: 4000 },
+      { x: 350, y: 2980 },
+      { x: 250, y: 2220 },
+      { x: 600, y: 1320 },
+      { x: 250, y: 580 }
     ]
   }
 };

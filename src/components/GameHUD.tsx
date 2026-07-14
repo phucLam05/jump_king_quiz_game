@@ -215,41 +215,13 @@ export const GameHUD: React.FC<GameHUDProps> = ({
             <span className={`text-[10px] font-black px-1.5 py-0.5 rounded uppercase ${
               shoeLevel === 2
                 ? "bg-cyan-500/10 text-cyan-400 border border-cyan-500/20"
-                : shoeLevel === 1
-                ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                : "bg-slate-800 text-slate-400 border border-slate-700"
+                : "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
             }`}>
-              {shoeLevel === 2 ? "Cấp 2 (Siêu Nhảy)" : shoeLevel === 1 ? "Cấp 1 (Thường)" : "Cấp 0 (Bị Khóa)"}
+              {shoeLevel === 2 ? "Cấp 2 (Siêu Nhảy)" : "Cấp 1 (Thường)"}
             </span>
           </div>
 
           <div className="space-y-1.5">
-            {shoeLevel === 0 && (
-              <div className="flex flex-col gap-2">
-                <button
-                  onClick={onUpgradeShoes}
-                  disabled={(coins ?? 0) < 30}
-                  className={`w-full flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-xs font-black uppercase transition-all transform active:scale-[0.98] border shadow-md ${
-                    (coins ?? 0) >= 30
-                      ? "bg-gradient-to-r from-indigo-600 to-purple-600 border-indigo-400 text-white cursor-pointer hover:brightness-110"
-                      : "bg-slate-950/60 border-slate-800 text-slate-500 cursor-not-allowed"
-                  }`}
-                >
-                  <ArrowUp size={13} />
-                  Mở khóa Nhảy (30 xu)
-                </button>
-                <div className="flex justify-between text-[10px] font-semibold text-slate-400">
-                  <span>Tiến trình</span>
-                  <span className="font-mono text-indigo-400">{coins}/30 xu</span>
-                </div>
-                <div className="w-full h-1.5 bg-slate-950 rounded-full overflow-hidden border border-slate-850">
-                  <div
-                    className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full transition-all duration-300"
-                    style={{ width: `${Math.min(((coins ?? 0) / 30) * 100, 100)}%` }}
-                  />
-                </div>
-              </div>
-            )}
 
             {shoeLevel === 1 && (
               <div className="flex flex-col gap-2">

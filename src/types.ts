@@ -89,6 +89,7 @@ export interface MapConfig {
   movingPlatforms?: MovingPlatformConfig[];
   monsters?: MonsterConfig[];
   checkpoints: CheckpointConfig[];
+  flightItems?: { x: number; y: number }[];
   goal: {
     x: number;
     y: number;

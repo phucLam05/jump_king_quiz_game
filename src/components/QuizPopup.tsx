@@ -7,6 +7,7 @@ interface QuizPopupProps {
   question: Question | null;
   checkpointId: number;
   onSaveSuccess: () => void;
+  onFail?: () => void;
   onClose: () => void;
   mode?: 'checkpoint' | 'fly';
 }
@@ -16,6 +17,7 @@ export const QuizPopup: React.FC<QuizPopupProps> = ({
   question,
   checkpointId,
   onSaveSuccess,
+  onFail,
   onClose,
   mode = 'checkpoint'
 }) => {
@@ -67,8 +69,15 @@ export const QuizPopup: React.FC<QuizPopupProps> = ({
       }, 1000);
     } else {
       setIsCorrect(false);
-      setIsLocked(true);
-      setLockTimeLeft(5);
+      if (mode === 'fly') {
+        // Freeze local player controls by closing quiz and invoking onFail
+        setTimeout(() => {
+          if (onFail) onFail();
+        }, 1000);
+      } else {
+        setIsLocked(true);
+        setLockTimeLeft(5);
+      }
     }
   };
 
