@@ -21,6 +21,9 @@ export class GameScene extends Phaser.Scene {
 
   // Map elements
   private platformsGroup!: Phaser.Physics.Arcade.StaticGroup;
+  private collapsingPlatformsGroup!: Phaser.Physics.Arcade.StaticGroup;
+  private slipperyPlatformsGroup!: Phaser.Physics.Arcade.StaticGroup;
+  private boosterPlatformsGroup!: Phaser.Physics.Arcade.StaticGroup;
   private checkpointsGroup!: Phaser.Physics.Arcade.StaticGroup;
   private goalZone!: Phaser.GameObjects.Rectangle;
 
@@ -30,6 +33,10 @@ export class GameScene extends Phaser.Scene {
   private chargeRatio: number = 0;
   private jumpDirection: number = 0; // -1 = left, 0 = up, 1 = right
   private lastOnGround: boolean = true;
+
+  // Shoe Level Variable
+  private shoeLevel: number = 0;
+  private highestYInAir: number = 0;
 
   // Charge Bar Graphic
   private chargeBar!: Phaser.GameObjects.Graphics;
@@ -52,6 +59,13 @@ export class GameScene extends Phaser.Scene {
   // Checkpoint Interaction State
   private overlappingCheckpointId: number = -1;
   private lastOverlappingCheckpointId: number = -1;
+  private lastTeleportTime: number = 0;
+
+  // Obstacles & Monsters Groups
+  private movingPlatformsGroup!: Phaser.Physics.Arcade.Group;
+  private monstersGroup!: Phaser.Physics.Arcade.Group;
+  private coinsGroup!: Phaser.Physics.Arcade.StaticGroup;
+  private isInvincible: boolean = false;
 
   // Callbacks to React
   private onReachCheckpoint!: (id: number) => void;
@@ -96,6 +110,9 @@ export class GameScene extends Phaser.Scene {
     this.chargeRatio = 0;
     this.jumpDirection = 0;
     this.spectateTargetId = null;
+    this.isInvincible = false;
+    this.shoeLevel = 0;
+    this.highestYInAir = 0;
   }
 
   public preload() {
@@ -111,16 +128,114 @@ export class GameScene extends Phaser.Scene {
     this.cameras.main.setBounds(0, 0, mapConfig.width, mapConfig.height);
     this.cameras.main.setBackgroundColor(mapConfig.backgroundColor);
 
-    // Create static platforms group
+    // Create static platforms groups
     this.platformsGroup = this.physics.add.staticGroup();
+    this.collapsingPlatformsGroup = this.physics.add.staticGroup();
+    this.slipperyPlatformsGroup = this.physics.add.staticGroup();
+    this.boosterPlatformsGroup = this.physics.add.staticGroup();
+    this.coinsGroup = this.physics.add.staticGroup();
+
     mapConfig.platforms.forEach((plat) => {
-      // Draw platform
-      const rect = this.add.rectangle(plat.x, plat.y, plat.width, plat.height, parseInt(plat.color?.replace('#', '0x') || '0x475569', 16));
-      this.platformsGroup.add(rect);
+      let width = plat.width;
+      
+      // Check if any monster is directly above this platform
+      const hasMonster = mapConfig.monsters && mapConfig.monsters.some((mon) => {
+        const yMatch = mon.y < plat.y && (plat.y - mon.y) <= 50;
+        const xMatch = mon.x >= (plat.x - plat.width / 2) && mon.x <= (plat.x + plat.width / 2);
+        return yMatch && xMatch;
+      });
+      
+      if (hasMonster) {
+        width = plat.width + 100; // Extend platform by 100px
+      }
+      
+      const colorHex = parseInt(plat.color?.replace('#', '0x') || '0x475569', 16);
+      const rect = this.add.rectangle(plat.x, plat.y, width, plat.height, colorHex);
+      
+      // Store custom flags on the GameObject for physics/rendering checks
+      if (plat.isCollapsing) {
+        rect.setData('isCollapsing', true);
+        this.collapsingPlatformsGroup.add(rect);
+        // Red outline for collapsing platforms
+        rect.setStrokeStyle(2, 0xef4444);
+      } else if (plat.isSlippery) {
+        rect.setData('isSlippery', true);
+        this.slipperyPlatformsGroup.add(rect);
+        // Blue outline for slippery platforms
+        rect.setStrokeStyle(2, 0x3b82f6);
+      } else if (plat.isBooster) {
+        rect.setData('isBooster', true);
+        this.boosterPlatformsGroup.add(rect);
+        // Add a yellow stroke/border to indicate Booster support
+        rect.setStrokeStyle(2, 0xffd700);
+      } else {
+        this.platformsGroup.add(rect);
+      }
+
       // Give physics properties
       const body = rect.body as Phaser.Physics.Arcade.StaticBody;
       body.updateFromGameObject();
     });
+
+    // Create moving platforms group
+    this.movingPlatformsGroup = this.physics.add.group({ allowGravity: false, immovable: true });
+    if (mapConfig.movingPlatforms) {
+      mapConfig.movingPlatforms.forEach((plat) => {
+        const rect = this.add.rectangle(plat.x, plat.y, plat.width, plat.height, parseInt(plat.color?.replace('#', '0x') || '0xef4444', 16));
+        this.movingPlatformsGroup.add(rect);
+        
+        const body = rect.body as Phaser.Physics.Arcade.Body;
+        body.setImmovable(true);
+        body.setAllowGravity(false);
+        
+        // One-way platform configuration to prevent horizontal separation issues
+        body.checkCollision.left = false;
+        body.checkCollision.right = false;
+        body.checkCollision.down = false;
+        body.checkCollision.up = true;
+        body.friction.x = 1; // Handled natively by Phaser Arcade Physics
+
+        // Store movement bounds
+        const isVertical = (plat.startY !== undefined && plat.endY !== undefined);
+        rect.setData('startX', plat.startX ?? plat.x);
+        rect.setData('endX', plat.endX ?? plat.x);
+        rect.setData('startY', plat.startY);
+        rect.setData('endY', plat.endY);
+        rect.setData('isVertical', isVertical);
+        rect.setData('speed', plat.speed);
+        
+        // Start moving
+        if (isVertical) {
+          body.setVelocityY(plat.speed);
+        } else {
+          body.setVelocityX(plat.speed);
+        }
+      });
+    }
+
+    // Create monsters group
+    this.monstersGroup = this.physics.add.group({ allowGravity: false, immovable: true });
+    if (mapConfig.monsters) {
+      mapConfig.monsters.forEach((mon) => {
+        const sprite = this.add.sprite(mon.x, mon.y, 'monster_body');
+        sprite.setTint(parseInt(mon.color?.replace('#', '0x') || '0xf87171', 16));
+        this.monstersGroup.add(sprite);
+
+        const body = sprite.body as Phaser.Physics.Arcade.Body;
+        body.setImmovable(true);
+        body.setAllowGravity(false);
+        body.setSize(mon.width, mon.height);
+        
+        // Store patrol range and properties
+        sprite.setData('startX', mon.startX);
+        sprite.setData('endX', mon.endX);
+        sprite.setData('speed', mon.speed);
+        sprite.setData('knockbackForce', mon.knockbackForce || 350);
+
+        // Start moving right
+        body.setVelocityX(mon.speed);
+      });
+    }
 
     // Create checkpoints
     this.checkpointsGroup = this.physics.add.staticGroup();
@@ -162,6 +277,60 @@ export class GameScene extends Phaser.Scene {
       repeat: -1
     });
 
+    // Generate coin texture dynamically
+    if (!this.textures.exists('coin')) {
+      const graphics = this.add.graphics();
+      graphics.fillStyle(0xfacc15, 1); // Shiny Gold
+      graphics.fillCircle(8, 8, 7);
+      graphics.lineStyle(1.5, 0xca8a04, 1); // Dark Gold border
+      graphics.strokeCircle(8, 8, 7);
+      
+      // Draw a tiny white highlight
+      graphics.fillStyle(0xffffff, 0.8);
+      graphics.fillCircle(5, 5, 1.5);
+      
+      graphics.generateTexture('coin', 16, 16);
+      graphics.destroy();
+    }
+
+    // Spawn 7 coins on the bottom ground floor (distributed evenly)
+    const groundY = mapConfig.height - 40;
+    const spacing = mapConfig.width / 8; // 8 parts for 7 coins
+    for (let i = 1; i <= 7; i++) {
+      const coinX = spacing * i;
+      const coinY = groundY - 20; // 20 pixels above the ground
+      const coin = this.physics.add.staticImage(coinX, coinY, 'coin');
+      this.coinsGroup.add(coin);
+    }
+
+    // Spawn other coins above upper platforms
+    mapConfig.platforms.forEach((plat) => {
+      // Don't spawn on bottom floor spawn platform, or on walls, or booster platforms
+      if (plat.y < mapConfig.height - 200 && plat.width > 20 && !plat.isBooster) {
+        // Spawn at center of platform, 35 pixels above it
+        const coin = this.physics.add.staticImage(plat.x, plat.y - 35, 'coin');
+        this.coinsGroup.add(coin);
+      }
+    });
+
+    // For moving platforms: spawn static coins at the middle of their paths so players can jump to collect them!
+    if (mapConfig.movingPlatforms) {
+      mapConfig.movingPlatforms.forEach((plat) => {
+        let coinX = plat.x;
+        let coinY = plat.y - 35;
+        
+        if (plat.startX !== undefined && plat.endX !== undefined) {
+          coinX = (plat.startX + plat.endX) / 2;
+        }
+        if (plat.startY !== undefined && plat.endY !== undefined) {
+          coinY = (plat.startY + plat.endY) / 2 - 35;
+        }
+        
+        const coin = this.physics.add.staticImage(coinX, coinY, 'coin');
+        this.coinsGroup.add(coin);
+      });
+    }
+
     // Create controls
     this.cursors = this.input.keyboard!.createCursorKeys();
     this.keys = this.input.keyboard!.addKeys({
@@ -175,6 +344,36 @@ export class GameScene extends Phaser.Scene {
     // Setup local player if not Host
     if (!this.isHost) {
       this.createLocalPlayer(mapConfig.spawnX, mapConfig.spawnY);
+      
+      const handleShoesUpgraded = (e: any) => {
+        if (this.localPlayer && this.localPlayer.active) {
+          const level = e?.detail?.level ?? 1;
+          const flashColor = level === 2 ? { r: 6, g: 182, b: 212 } : { r: 16, g: 185, b: 129 };
+          const particleColor = level === 2 ? 0x06b6d4 : 0x10b981;
+          
+          this.cameras.main.flash(200, flashColor.r, flashColor.g, flashColor.b);
+          for (let i = 0; i < 12; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const dist = 15 + Math.random() * 20;
+            const sx = this.localPlayer.x + Math.cos(angle) * dist;
+            const sy = this.localPlayer.y + Math.sin(angle) * dist;
+            const spark = this.add.circle(sx, sy, 3, particleColor);
+            this.tweens.add({
+              targets: spark,
+              x: this.localPlayer.x,
+              y: this.localPlayer.y,
+              alpha: 0,
+              scale: 0.1,
+              duration: 400,
+              onComplete: () => spark.destroy()
+            });
+          }
+        }
+      };
+      window.addEventListener('shoes_upgraded', handleShoesUpgraded);
+      this.events.once('shutdown', () => {
+        window.removeEventListener('shoes_upgraded', handleShoesUpgraded);
+      });
     } else {
       // Setup host free camera dragging controls
       this.setupHostDragControls();
@@ -185,8 +384,13 @@ export class GameScene extends Phaser.Scene {
     // Set up collisions & overlaps
     if (!this.isHost) {
       this.physics.add.collider(this.localPlayer, this.platformsGroup, this.handlePlatformCollision, undefined, this);
-      this.physics.add.overlap(this.localPlayer, this.checkpointsGroup, this.handleCheckpointOverlap, undefined, this);
+      this.physics.add.collider(this.localPlayer, this.slipperyPlatformsGroup, this.handlePlatformCollision, undefined, this);
+      this.physics.add.collider(this.localPlayer, this.collapsingPlatformsGroup, this.handleCollapsingPlatformCollision, undefined, this);
+      this.physics.add.collider(this.localPlayer, this.boosterPlatformsGroup, this.handleBoosterCollision, undefined, this);
+      this.physics.add.collider(this.localPlayer, this.movingPlatformsGroup, undefined, undefined, this);
+      this.physics.add.overlap(this.localPlayer, this.monstersGroup, this.handleMonsterOverlap, undefined, this);
       this.physics.add.overlap(this.localPlayer, this.goalZone, this.handleGoalOverlap, undefined, this);
+      this.physics.add.overlap(this.localPlayer, this.coinsGroup, this.handleCoinOverlap, undefined, this);
     }
 
     if (this.isInitiallyPaused) {
@@ -196,23 +400,79 @@ export class GameScene extends Phaser.Scene {
 
   public update(time: number, delta: number) {
     // Checkpoint Enter/Leave Triggers
-    if (!this.isHost) {
-      if (this.overlappingCheckpointId !== this.lastOverlappingCheckpointId) {
-        if (this.overlappingCheckpointId !== -1) {
-          const event = new CustomEvent('enter_checkpoint', { detail: { id: this.overlappingCheckpointId } });
+    if (!this.isHost && this.localPlayer && this.localPlayer.active && this.checkpointsGroup) {
+      let currentCPId = -1;
+      this.checkpointsGroup.getChildren().forEach((cpObj: any) => {
+        if (Phaser.Geom.Intersects.RectangleToRectangle(this.localPlayer.getBounds(), cpObj.getBounds())) {
+          currentCPId = cpObj.getData('checkpointId');
+        }
+      });
+
+      if (currentCPId !== this.lastOverlappingCheckpointId) {
+        if (currentCPId !== -1) {
+          const event = new CustomEvent('enter_checkpoint', { detail: { id: currentCPId } });
           window.dispatchEvent(event);
         } else {
           const event = new CustomEvent('leave_checkpoint', { detail: { id: this.lastOverlappingCheckpointId } });
           window.dispatchEvent(event);
         }
-        this.lastOverlappingCheckpointId = this.overlappingCheckpointId;
+        this.lastOverlappingCheckpointId = currentCPId;
       }
-      this.overlappingCheckpointId = -1; // Reset for physics overlap step
     }
+
+    // Update moving platforms horizontal & vertical patrol
+    if (this.movingPlatformsGroup && this.movingPlatformsGroup.active) {
+      this.movingPlatformsGroup.getChildren().forEach((plat: any) => {
+        const body = plat.body as Phaser.Physics.Arcade.Body;
+        const isVertical = plat.getData('isVertical');
+        const speed = plat.getData('speed');
+        
+        if (isVertical) {
+          const startY = plat.getData('startY');
+          const endY = plat.getData('endY');
+          if (body.velocity.y > 0 && plat.y >= endY) {
+            body.setVelocityY(-speed);
+          } else if (body.velocity.y < 0 && plat.y <= startY) {
+            body.setVelocityY(speed);
+          }
+        } else {
+          if (body.velocity.x > 0 && plat.x >= plat.getData('endX')) {
+            body.setVelocityX(-speed);
+          } else if (body.velocity.x < 0 && plat.x <= plat.getData('startX')) {
+            body.setVelocityX(speed);
+          }
+        }
+      });
+    }
+
+    // Update monsters horizontal patrol
+    if (this.monstersGroup && this.monstersGroup.active) {
+      this.monstersGroup.getChildren().forEach((mon: any) => {
+        const body = mon.body as Phaser.Physics.Arcade.Body;
+        if (body.velocity.x > 0 && mon.x >= mon.getData('endX')) {
+          body.setVelocityX(-mon.getData('speed'));
+          mon.setFlipX(true);
+        } else if (body.velocity.x < 0 && mon.x <= mon.getData('startX')) {
+          body.setVelocityX(mon.getData('speed'));
+          mon.setFlipX(false);
+        }
+      });
+    }
+
+
 
     if (this.isHost) {
       this.handleHostCameraControls();
     } else {
+      if (this.localPlayer && this.localPlayer.active) {
+        if (this.shoeLevel === 0) {
+          this.localPlayer.setTint(0x707f94);
+        } else if (this.shoeLevel === 2) {
+          this.localPlayer.setTint(0x22d3ee);
+        } else {
+          this.localPlayer.setTint(parseInt(this.playerColor.replace('#', '0x'), 16));
+        }
+      }
       this.handlePlayerControls(time, delta);
       this.updateChargeBar();
       this.syncPositionWithThrottle(time);
@@ -246,6 +506,30 @@ export class GameScene extends Phaser.Scene {
 
   // Update list of remote players
   public updatePlayers(players: Record<string, PlayerState>) {
+    // If not host, check if local player needs to be teleported by host
+    if (!this.isHost && this.playerId) {
+      const myState = players[this.playerId];
+      if (myState) {
+        this.shoeLevel = myState.shoeLevel || 0;
+        
+        if (myState.teleportTarget) {
+          const target = myState.teleportTarget;
+          if (target.time !== this.lastTeleportTime) {
+            this.lastTeleportTime = target.time;
+            this.respawnTo(target.x, target.y);
+            
+            const event = new CustomEvent('local_player_teleported', {
+              detail: {
+                x: target.x,
+                y: target.y
+              }
+            });
+            window.dispatchEvent(event);
+          }
+        }
+      }
+    }
+
     // Add or update remote players
     Object.keys(players).forEach((id) => {
       if (id === this.playerId) return; // Skip local player
@@ -265,18 +549,55 @@ export class GameScene extends Phaser.Scene {
         remote.nameTag.setVisible(isVisible);
         
         // Update name tag and check if finished
+        const lvSuffix = p.shoeLevel !== undefined ? ` [LV${p.shoeLevel}]` : ' [LV0]';
         if (p.isFinished) {
           remote.nameTag.setText(`🏁 ${p.name}`);
           remote.nameTag.setColor('#f59e0b');
         } else {
-          remote.nameTag.setText(`${p.name} (${Math.round(p.height)}m)`);
+          remote.nameTag.setText(`${p.name}${lvSuffix} (${Math.round(p.height)}m)`);
+        }
+
+        // Sync visual tint for remote players based on shoeLevel
+        if (p.shoeLevel === 0) {
+          remote.sprite.setTint(0x707f94);
+          remote.sprite.setAlpha(0.4);
+        } else if (p.shoeLevel === 2) {
+          remote.sprite.setTint(0x22d3ee);
+          remote.sprite.setAlpha(0.65);
+        } else {
+          remote.sprite.setTint(parseInt(p.color.replace('#', '0x'), 16));
+          remote.sprite.setAlpha(0.5);
         }
       } else {
         // Create new remote player sprite
         const sprite = this.add.sprite(p.x, p.y, 'player_body');
-        sprite.setTint(parseInt(p.color.replace('#', '0x'), 16));
-        sprite.setAlpha(0.5); // Ghost effect
+        if (p.shoeLevel === 0) {
+          sprite.setTint(0x707f94);
+          sprite.setAlpha(0.4);
+        } else if (p.shoeLevel === 2) {
+          sprite.setTint(0x22d3ee);
+          sprite.setAlpha(0.65);
+        } else {
+          sprite.setTint(parseInt(p.color.replace('#', '0x'), 16));
+          sprite.setAlpha(0.5); // Ghost effect
+        }
         sprite.setVisible(!p.offline);
+
+        // Host (Admin) Ctrl + Click teleport control
+        if (this.isHost) {
+          sprite.setInteractive({ useHandCursor: true });
+          sprite.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+            if (pointer.event.ctrlKey) {
+              const event = new CustomEvent('admin_teleport_request', {
+                detail: {
+                  playerId: id,
+                  playerName: p.name
+                }
+              });
+              window.dispatchEvent(event);
+            }
+          });
+        }
         
         // Add name tag
         const nameTag = this.add.text(p.x, p.y - 25, p.name, {
@@ -340,6 +661,28 @@ export class GameScene extends Phaser.Scene {
       g.fillCircle(17.5, 9.5, 1);
 
       g.generateTexture('player_body', 24, 30);
+    }
+
+    // Generate a monster texture
+    if (!this.textures.exists('monster_body')) {
+      const g = this.make.graphics({ x: 0, y: 0 }, false);
+      g.fillStyle(0xffffff, 1);
+      g.fillRoundedRect(0, 0, 22, 22, 6);
+      
+      // Angry glowing eyes
+      g.fillStyle(0xff0000, 1);
+      g.fillCircle(5, 7, 2.5);
+      g.fillCircle(17, 7, 2.5);
+      // Slanted angry eyebrows
+      g.lineStyle(1.5, 0x000000, 1);
+      g.lineBetween(3, 4, 7, 6);
+      g.lineBetween(19, 4, 15, 6);
+
+      // Mouth
+      g.fillStyle(0x000000, 1);
+      g.fillRect(8, 14, 6, 2);
+      
+      g.generateTexture('monster_body', 22, 22);
     }
   }
 
@@ -431,14 +774,16 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
-    const onGround = this.localPlayer.body.blocked.down;
-    
-    // Handle state transitions
-    if (onGround && !this.lastOnGround) {
-      // Just landed! Reset squashing scale
-      this.localPlayer.setScale(1, 1);
-    }
-    this.lastOnGround = onGround;
+    // Read virtual inputs from window if joystick/mobile is used
+    const mobileInput = (window as any).mobileControls || { left: false, right: false, jump: false };
+
+    // Aiming jump direction
+    const goLeft = this.cursors.left?.isDown || this.keys.A?.isDown || mobileInput.left;
+    const goRight = this.cursors.right?.isDown || this.keys.D?.isDown || mobileInput.right;
+    const goUp = this.cursors.up?.isDown || this.keys.W?.isDown;
+    const goDown = this.cursors.down?.isDown || this.keys.S?.isDown;
+    // Lock jump key at Level 0
+    const isPressingJump = (this.cursors.space?.isDown || mobileInput.jump) && this.shoeLevel > 0;
 
     // Respawn trigger via Key R (React handles the state, but we check key press here)
     if (Phaser.Input.Keyboard.JustDown(this.keys.R)) {
@@ -447,23 +792,79 @@ export class GameScene extends Phaser.Scene {
       window.dispatchEvent(rEvent);
     }
 
-    // Read virtual inputs from window if joystick/mobile is used
-    const mobileInput = (window as any).mobileControls || { left: false, right: false, jump: false };
+    let onGround = this.localPlayer.body.blocked.down || this.localPlayer.body.touching.down;
+    
+    // Fix micro-bounces on moving platforms (especially when they move down)
+    if (!onGround && this.movingPlatformsGroup && this.movingPlatformsGroup.active) {
+      this.movingPlatformsGroup.getChildren().forEach((plat: any) => {
+        if (plat.body) {
+          const platBody = plat.body as Phaser.Physics.Arcade.Body;
+          const playerBottom = this.localPlayer.body.bottom;
+          const platTop = platBody.top;
+          
+          const xOverlap = this.localPlayer.body.right > platBody.left && 
+                           this.localPlayer.body.left < platBody.right;
+                           
+          // If player is directly above the platform within 5 pixels and not moving upwards
+          if (xOverlap && Math.abs(playerBottom - platTop) <= 5 && this.localPlayer.body.velocity.y >= 0) {
+            onGround = true;
+            // Snap player Y so that body.bottom is exactly at platTop + 1 (ensure collision)
+            this.localPlayer.y = platTop - this.localPlayer.body.halfHeight - this.localPlayer.body.offset.y + 1;
+            
+            // Match vertical velocity if platform is moving down
+            if (platBody.velocity.y > 0) {
+              this.localPlayer.setVelocityY(platBody.velocity.y);
+            }
+          }
+        }
+      });
+    }
+    
+    // Handle state transitions
+    if (onGround && !this.lastOnGround) {
+      // Just landed! Reset squashing scale
+      this.localPlayer.setScale(1, 1);
 
-    // Aiming jump direction
-    const goLeft = this.cursors.left?.isDown || this.keys.A?.isDown || mobileInput.left;
-    const goRight = this.cursors.right?.isDown || this.keys.D?.isDown || mobileInput.right;
-    const isPressingJump = this.cursors.space?.isDown || mobileInput.jump;
+      // Check fall distance in meters
+      const mapConfig = MAPS[this.mapId] || MAPS.easy;
+      const groundY = mapConfig.height - 40;
+      const fallStartHeight = Math.max(0, (groundY - this.highestYInAir) / 10);
+      const fallEndHeight = Math.max(0, (groundY - this.localPlayer.y) / 10);
+      const fallDistance = fallStartHeight - fallEndHeight;
+
+      if (fallDistance > 60) {
+        const fallEvent = new CustomEvent('player_long_fall');
+        window.dispatchEvent(fallEvent);
+      }
+      
+      this.highestYInAir = this.localPlayer.y;
+    }
+    this.lastOnGround = onGround;
+
+    // Track highest peak reached in the air
+    if (!onGround) {
+      if (this.localPlayer.y < this.highestYInAir) {
+        this.highestYInAir = this.localPlayer.y;
+      }
+    } else {
+      this.highestYInAir = this.localPlayer.y;
+    }
 
     if (onGround) {
       // --- GROUND CONTROLS ---
       if (isPressingJump) {
-        // Start charging
-        this.isCharging = true;
+        // Start charging transition
+        if (!this.isCharging) {
+          this.isCharging = true;
+          this.chargeTime = 0;
+          this.chargeRatio = 0;
+          this.jumpDirection = 0; // Default to vertical jump
+        }
+        
         this.chargeTime += delta;
         this.chargeRatio = Math.min(this.chargeTime / 800, 1); // 0.8s max charge time
 
-        // Set direction
+        // Set direction: left, right, or reset to center (0) if neither is pressed
         if (goLeft) {
           this.jumpDirection = -1;
         } else if (goRight) {
@@ -483,15 +884,23 @@ export class GameScene extends Phaser.Scene {
           this.isCharging = false;
           this.localPlayer.setScale(1, 1);
 
-          // Calculate velocities
-          const minVy = -320;
-          const maxVy = -700;
+          // Calculate velocities based on shoe level
+          let minVy = -320;
+          let maxVy = -750;
+          let minVx = 100;
+          let maxVx = 350;
+          
+          if (this.shoeLevel === 1) {
+            minVy = -260;
+            maxVy = -580; // Slightly higher than half height
+            minVx = 85;
+            maxVx = 280;
+          }
+
           const launchVy = minVy + (maxVy - minVy) * this.chargeRatio;
 
           let launchVx = 0;
           if (this.jumpDirection !== 0) {
-            const minVx = 100;
-            const maxVx = 350;
             launchVx = this.jumpDirection * (minVx + (maxVx - minVx) * this.chargeRatio);
           }
 
@@ -501,12 +910,43 @@ export class GameScene extends Phaser.Scene {
           this.chargeRatio = 0;
         } else {
           // --- REGULAR WALKING ON GROUND ---
+          let onSlippery = false;
+          if (this.slipperyPlatformsGroup && this.slipperyPlatformsGroup.active) {
+            this.slipperyPlatformsGroup.getChildren().forEach((plat: any) => {
+              if (Phaser.Geom.Intersects.RectangleToRectangle(this.localPlayer.getBounds(), plat.getBounds())) {
+                onSlippery = true;
+              }
+            });
+          }
+
           if (goLeft) {
             this.localPlayer.setVelocityX(-180);
           } else if (goRight) {
             this.localPlayer.setVelocityX(180);
           } else {
-            this.localPlayer.setVelocityX(0);
+            if (onSlippery) {
+              const vx = this.localPlayer.body.velocity.x;
+              if (Math.abs(vx) < 5) {
+                this.localPlayer.setVelocityX(0);
+              } else {
+                this.localPlayer.setVelocityX(vx * 0.96);
+              }
+            } else {
+              this.localPlayer.setVelocityX(0);
+            }
+          }
+
+          // Spark/dust trail on ground for upgraded shoes
+          if (this.shoeLevel > 0 && Math.abs(this.localPlayer.body.velocity.x) > 50 && time % 5 === 0) {
+            const dust = this.add.rectangle(this.localPlayer.x, this.localPlayer.y + 14, 4, 4, 0x06b6d4);
+            this.tweens.add({
+              targets: dust,
+              alpha: 0,
+              scale: 0.1,
+              y: dust.y - 8,
+              duration: 300,
+              onComplete: () => dust.destroy()
+            });
           }
         }
       }
@@ -548,11 +988,94 @@ export class GameScene extends Phaser.Scene {
     // Left empty, standard arcade physics resolves collision
   }
 
-  private handleCheckpointOverlap(playerObj: any, cpObj: any) {
-    const cpId = cpObj.getData('checkpointId');
-    if (typeof cpId === 'number') {
-      this.overlappingCheckpointId = cpId;
+  private handleCollapsingPlatformCollision(playerObj: any, platformObj: any) {
+    this.handlePlatformCollision();
+    
+    // Only collapse if player lands on top of the platform
+    if (playerObj.body.touching.down && platformObj.body.touching.up) {
+      const isAlreadyCollapsing = platformObj.getData('collapsingState');
+      if (!isAlreadyCollapsing) {
+        platformObj.setData('collapsingState', true);
+        
+        // Shake tween
+        const originalX = platformObj.x;
+        this.tweens.add({
+          targets: platformObj,
+          x: originalX + 4,
+          duration: 50,
+          yoyo: true,
+          repeat: 19, // 20 cycles of 100ms = 2000ms (2 seconds) total
+          onComplete: () => {
+            // Restore original X after shake
+            platformObj.x = originalX;
+            // Hide and disable collision
+            platformObj.setVisible(false);
+            platformObj.body.enable = false;
+            
+            // Respawn after 3 seconds
+            this.time.delayedCall(3000, () => {
+              platformObj.setVisible(true);
+              platformObj.body.enable = true;
+              platformObj.setData('collapsingState', false);
+              // Fade in
+              platformObj.alpha = 0;
+              this.tweens.add({
+                targets: platformObj,
+                alpha: 1,
+                duration: 200
+              });
+            });
+          }
+        });
+      }
     }
+  }
+
+  private handleBoosterCollision(playerObj: any, boosterObj: any) {
+    this.handlePlatformCollision();
+    
+    // Check if player touched the top of booster platform
+    if (playerObj.body.touching.down && boosterObj.body.touching.up) {
+      playerObj.setVelocityY(-480); // Substantial upward push
+      // Visual indicator on player
+      this.tweens.add({
+        targets: playerObj,
+        alpha: 0.4,
+        duration: 80,
+        yoyo: true,
+        repeat: 3
+      });
+    }
+  }
+
+
+
+  private handleMonsterOverlap(playerObj: any, monsterObj: any) {
+    if (this.isHost || !this.localPlayer || this.isInvincible) return;
+
+    this.isInvincible = true;
+    
+    const force = monsterObj.getData('knockbackForce') || 350;
+    const direction = (this.localPlayer.x < monsterObj.x) ? -1 : 1;
+    
+    // Set knockback velocity
+    this.localPlayer.setVelocity(direction * force, -350);
+
+    // Shake camera for heavy impact feedback
+    this.cameras.main.shake(150, 0.012);
+
+    // Flash player to show they got hit
+    this.tweens.add({
+      targets: this.localPlayer,
+      alpha: 0.2,
+      duration: 80,
+      yoyo: true,
+      repeat: 6,
+      onComplete: () => {
+        this.isInvincible = false;
+        if (this.localPlayer) this.localPlayer.setAlpha(1);
+      }
+    });
   }
 
   private handleGoalOverlap() {
@@ -639,8 +1162,9 @@ export class GameScene extends Phaser.Scene {
         y,
         vx: this.localPlayer.body.velocity.x,
         vy: this.localPlayer.body.velocity.y,
-        height: currentHeight
-      });
+        height: currentHeight,
+        shoeLevel: this.shoeLevel
+      } as any);
       
       this.lastUpdateTime = time;
     }
@@ -665,5 +1189,61 @@ export class GameScene extends Phaser.Scene {
         this.pauseText.setVisible(false);
       }
     }
+  }
+  private handleCoinOverlap(playerObj: any, coinObj: any) {
+    if (this.isHost) return;
+    
+    const mapConfig = MAPS[this.mapId] || MAPS.easy;
+    const groundY = mapConfig.height;
+    const currentHeight = Math.max(0, (groundY - playerObj.y) / 10);
+    
+    const coinValue = 1 + Math.floor(currentHeight / 100);
+    
+    // Hide and disable coin collision
+    coinObj.setVisible(false);
+    if (coinObj.body) {
+      coinObj.body.enable = false;
+    }
+    
+    const text = this.add.text(coinObj.x, coinObj.y - 10, `+${coinValue}`, {
+      fontSize: '14px',
+      color: '#facc15',
+      fontStyle: 'bold',
+      stroke: '#000000',
+      strokeThickness: 3
+    }).setOrigin(0.5);
+    
+    this.tweens.add({
+      targets: text,
+      y: text.y - 45,
+      alpha: 0,
+      duration: 800,
+      onComplete: () => text.destroy()
+    });
+    
+    // Respawn after 3 seconds (3000ms)
+    this.time.delayedCall(3000, () => {
+      if (coinObj && coinObj.scene) {
+        coinObj.setVisible(true);
+        if (coinObj.body) {
+          coinObj.body.enable = true;
+        }
+        
+        // Fade in
+        coinObj.alpha = 0;
+        this.tweens.add({
+          targets: coinObj,
+          alpha: 1,
+          duration: 200
+        });
+      }
+    });
+    
+    const event = new CustomEvent('coin_collected', {
+      detail: {
+        value: coinValue
+      }
+    });
+    window.dispatchEvent(event);
   }
 }

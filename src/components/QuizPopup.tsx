@@ -8,6 +8,7 @@ interface QuizPopupProps {
   checkpointId: number;
   onSaveSuccess: () => void;
   onClose: () => void;
+  mode?: 'checkpoint' | 'fly';
 }
 
 export const QuizPopup: React.FC<QuizPopupProps> = ({
@@ -15,7 +16,8 @@ export const QuizPopup: React.FC<QuizPopupProps> = ({
   question,
   checkpointId,
   onSaveSuccess,
-  onClose
+  onClose,
+  mode = 'checkpoint'
 }) => {
   const [step, setStep] = useState<'prompt' | 'quiz'>('prompt');
   const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null);
@@ -81,8 +83,12 @@ export const QuizPopup: React.FC<QuizPopupProps> = ({
               <HelpCircle size={24} />
             </div>
             <div>
-              <h3 className="text-lg font-bold text-slate-100">Checkpoint #{checkpointId + 1}</h3>
-              <p className="text-xs text-slate-400">Lưu lại điểm hồi sinh để không bị rơi xuống đất</p>
+              <h3 className="text-lg font-bold text-slate-100">
+                {mode === 'fly' ? "Thách Đố Lượt Bay Miễn Phí" : `Checkpoint #${checkpointId + 1}`}
+              </h3>
+              <p className="text-xs text-slate-400">
+                {mode === 'fly' ? "Trả lời đúng để nhận 1 lượt bay tự do trong 2s" : "Lưu lại điểm hồi sinh để không bị rơi xuống đất"}
+              </p>
             </div>
           </div>
           <button
@@ -98,21 +104,23 @@ export const QuizPopup: React.FC<QuizPopupProps> = ({
         {step === 'prompt' ? (
           <div className="p-6 text-center space-y-6">
             <p className="text-slate-300 text-sm md:text-base">
-              Bạn đang đứng tại vùng Checkpoint. Bạn muốn làm quiz để lưu lại tiến trình chơi của mình chứ?
+              {mode === 'fly'
+                ? "Bạn muốn trả lời câu hỏi trắc nghiệm để nhận ngay 1 lượt bay tự do miễn phí chứ?"
+                : "Bạn đang đứng tại vùng Checkpoint. Bạn muốn làm quiz để lưu lại tiến trình chơi của mình chứ?"}
             </p>
             <div className="flex flex-col sm:flex-row gap-3 justify-center pt-2">
               <button
                 onClick={onClose}
                 className="px-5 py-3 text-sm font-semibold text-slate-400 bg-slate-800 border border-slate-700 rounded-xl hover:bg-slate-750 hover:text-slate-200 transition"
               >
-                Tiếp tục leo (Continue)
+                {mode === 'fly' ? "Để sau" : "Tiếp tục leo (Continue)"}
               </button>
               <button
                 onClick={() => setStep('quiz')}
                 className="flex items-center justify-center gap-2 px-6 py-3 text-sm font-bold text-white bg-indigo-600 rounded-xl hover:bg-indigo-500 shadow-lg shadow-indigo-600/20 active:scale-95 transition"
               >
                 <Play size={16} fill="white" />
-                Trả lời Quiz để Lưu (Save)
+                {mode === 'fly' ? "Bắt đầu trả lời" : "Trả lời Quiz để Lưu (Save)"}
               </button>
             </div>
           </div>
@@ -169,7 +177,7 @@ export const QuizPopup: React.FC<QuizPopupProps> = ({
             {isCorrect === true && (
               <div className="flex items-center justify-center gap-2 p-3 text-sm font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-xl">
                 <CheckCircle size={18} />
-                <span>Hoàn thành! Đã lưu checkpoint.</span>
+                <span>{mode === 'fly' ? "Thành công! Đã nhận 1 lượt bay." : "Hoàn thành! Đã lưu checkpoint."}</span>
               </div>
             )}
 
@@ -180,7 +188,7 @@ export const QuizPopup: React.FC<QuizPopupProps> = ({
                   onClick={onClose}
                   className="px-5 py-2.5 text-xs font-bold text-slate-400 hover:text-slate-200 bg-slate-850 hover:bg-slate-800 border border-slate-800 rounded-xl transition active:scale-95 pointer-events-auto"
                 >
-                  Đóng / Hủy lưu
+                  {mode === 'fly' ? "Đóng / Hủy giải đố" : "Đóng / Hủy lưu"}
                 </button>
               </div>
             )}

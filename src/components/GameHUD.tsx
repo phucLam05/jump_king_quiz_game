@@ -1,5 +1,5 @@
 import React from 'react';
-import { Timer, ArrowUp, Flag, Trophy, Keyboard, Eye, HelpCircle } from 'lucide-react';
+import { Timer, ArrowUp, Flag, Trophy, Keyboard, Eye, HelpCircle, Coins } from 'lucide-react';
 
 interface GameHUDProps {
   playerName: string;
@@ -16,6 +16,9 @@ interface GameHUDProps {
   isInCheckpointZone: boolean;
   onSaveCheckpointTrigger: () => void;
   onToggleLeaderboard: () => void;
+  coins?: number;
+  shoeLevel: number;
+  onUpgradeShoes?: () => void;
 }
 
 export const GameHUD: React.FC<GameHUDProps> = ({
@@ -32,7 +35,10 @@ export const GameHUD: React.FC<GameHUDProps> = ({
   spectatedPlayerName,
   isInCheckpointZone,
   onSaveCheckpointTrigger,
-  onToggleLeaderboard
+  onToggleLeaderboard,
+  coins,
+  shoeLevel,
+  onUpgradeShoes
 }) => {
   // Format time remaining
   const formatTime = (secs: number) => {
@@ -61,14 +67,28 @@ export const GameHUD: React.FC<GameHUDProps> = ({
               <span className="text-[10px] px-1.5 py-0.5 bg-slate-800 text-slate-400 rounded-md">PLAYER</span>
             </div>
 
-            {/* Heights Dashboard */}
-            <div className="flex items-center gap-2 bg-slate-900/80 border border-slate-700/55 backdrop-blur-md px-3.5 py-2 rounded-xl text-slate-200">
-              <div className="text-indigo-400">
-                <ArrowUp size={18} />
+            {/* Stats Dashboard */}
+            <div className="flex gap-2">
+              {/* Heights Dashboard */}
+              <div className="flex items-center gap-2 bg-slate-900/80 border border-slate-700/55 backdrop-blur-md px-3.5 py-2 rounded-xl text-slate-200">
+                <div className="text-indigo-400">
+                  <ArrowUp size={18} />
+                </div>
+                <div>
+                  <div className="text-[10px] text-slate-400 uppercase font-semibold">Độ cao</div>
+                  <div className="text-sm font-extrabold">{Math.round(height)}m</div>
+                </div>
               </div>
-              <div>
-                <div className="text-[10px] text-slate-400 uppercase font-semibold">Độ cao</div>
-                <div className="text-sm font-extrabold">{Math.round(height)}m</div>
+
+              {/* Coins Dashboard */}
+              <div className="flex items-center gap-2 bg-slate-900/80 border border-slate-700/55 backdrop-blur-md px-3.5 py-2 rounded-xl text-slate-200">
+                <div className="text-yellow-400">
+                  <Coins size={18} />
+                </div>
+                <div>
+                  <div className="text-[10px] text-slate-400 uppercase font-semibold">Số xu</div>
+                  <div className="text-sm font-extrabold text-yellow-400">{coins ?? 0}</div>
+                </div>
               </div>
             </div>
           </div>
@@ -184,6 +204,91 @@ export const GameHUD: React.FC<GameHUDProps> = ({
             <Flag size={15} className="fill-white" />
             <span>Lưu Checkpoint <span className="hidden md:inline">(Nhấn E)</span></span>
           </button>
+        </div>
+      )}
+
+      {/* Bottom Right: Shoe Upgrade Progress Status */}
+      {!isHost && (
+        <div className="absolute bottom-24 right-4 pointer-events-auto bg-slate-900/80 border border-slate-750 p-4 rounded-2xl shadow-xl w-64 select-none backdrop-blur-md flex flex-col gap-2.5">
+          <div className="flex items-center justify-between border-b border-slate-800 pb-1.5">
+            <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Cấp Độ Giày</span>
+            <span className={`text-[10px] font-black px-1.5 py-0.5 rounded uppercase ${
+              shoeLevel === 2
+                ? "bg-cyan-500/10 text-cyan-400 border border-cyan-500/20"
+                : shoeLevel === 1
+                ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                : "bg-slate-800 text-slate-400 border border-slate-700"
+            }`}>
+              {shoeLevel === 2 ? "Cấp 2 (Siêu Nhảy)" : shoeLevel === 1 ? "Cấp 1 (Thường)" : "Cấp 0 (Bị Khóa)"}
+            </span>
+          </div>
+
+          <div className="space-y-1.5">
+            {shoeLevel === 0 && (
+              <div className="flex flex-col gap-2">
+                <button
+                  onClick={onUpgradeShoes}
+                  disabled={(coins ?? 0) < 30}
+                  className={`w-full flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-xs font-black uppercase transition-all transform active:scale-[0.98] border shadow-md ${
+                    (coins ?? 0) >= 30
+                      ? "bg-gradient-to-r from-indigo-600 to-purple-600 border-indigo-400 text-white cursor-pointer hover:brightness-110"
+                      : "bg-slate-950/60 border-slate-800 text-slate-500 cursor-not-allowed"
+                  }`}
+                >
+                  <ArrowUp size={13} />
+                  Mở khóa Nhảy (30 xu)
+                </button>
+                <div className="flex justify-between text-[10px] font-semibold text-slate-400">
+                  <span>Tiến trình</span>
+                  <span className="font-mono text-indigo-400">{coins}/30 xu</span>
+                </div>
+                <div className="w-full h-1.5 bg-slate-950 rounded-full overflow-hidden border border-slate-850">
+                  <div
+                    className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full transition-all duration-300"
+                    style={{ width: `${Math.min(((coins ?? 0) / 30) * 100, 100)}%` }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {shoeLevel === 1 && (
+              <div className="flex flex-col gap-2">
+                <button
+                  onClick={onUpgradeShoes}
+                  disabled={(coins ?? 0) < 70}
+                  className={`w-full flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-xs font-black uppercase transition-all transform active:scale-[0.98] border shadow-md ${
+                    (coins ?? 0) >= 70
+                      ? "bg-gradient-to-r from-emerald-600 to-cyan-600 border-emerald-400 text-white cursor-pointer hover:brightness-110"
+                      : "bg-slate-950/60 border-slate-800 text-slate-500 cursor-not-allowed"
+                  }`}
+                >
+                  <ArrowUp size={13} />
+                  Lên Siêu Nhảy (70 xu)
+                </button>
+                <div className="flex justify-between text-[10px] font-semibold text-slate-400">
+                  <span>Tiến trình</span>
+                  <span className="font-mono text-emerald-400">{coins}/70 xu</span>
+                </div>
+                <div className="w-full h-1.5 bg-slate-950 rounded-full overflow-hidden border border-slate-850">
+                  <div
+                    className="h-full bg-gradient-to-r from-emerald-500 to-cyan-500 rounded-full transition-all duration-300"
+                    style={{ width: `${Math.min(((coins ?? 0) / 70) * 100, 100)}%` }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {shoeLevel === 2 && (
+              <div className="py-1 text-center space-y-1">
+                <div className="text-xs font-black text-cyan-400 flex items-center justify-center gap-1">
+                  <span>⚡ GIÀY SIÊU NHẢY TỐI ĐA ⚡</span>
+                </div>
+                <span className="text-[10px] text-slate-400 block">
+                  Đôi giày tối tân nhất! Lực nhảy tăng cực đại để chinh phục đỉnh cao.
+                </span>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>

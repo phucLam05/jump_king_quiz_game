@@ -25,7 +25,8 @@ import {
   RefreshCw,
   LogOut,
   Check,
-  Copy
+  Copy,
+  Coins
 } from 'lucide-react';
 
 // Generates a random player color
@@ -66,6 +67,10 @@ export default function App() {
   // Sync data states
   const [roomConfig, setRoomConfig] = useState<RoomConfig | null>(null);
   const [players, setPlayers] = useState<Record<string, PlayerState>>({});
+  const playersRef = useRef(players);
+  useEffect(() => {
+    playersRef.current = players;
+  }, [players]);
 
   // Local Game States
   const [activeCheckpointId, setActiveCheckpointId] = useState<number>(-1);
@@ -95,6 +100,15 @@ export default function App() {
   // Checkpoint Quiz States
   const [checkpointQuizOpen, setCheckpointQuizOpen] = useState(false);
   const [quizCheckpointId, setQuizCheckpointId] = useState<number>(-1);
+  const [fallQuote, setFallQuote] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!fallQuote) return;
+    const timer = setTimeout(() => {
+      setFallQuote(null);
+    }, 4500);
+    return () => clearTimeout(timer);
+  }, [fallQuote]);
 
   // Resume Countdown States
   const [resumeCountdown, setResumeCountdown] = useState<number | null>(null);
@@ -164,14 +178,88 @@ export default function App() {
       setCurrentCheckpointZoneId(-1);
     };
 
+    const handleAdminTeleportRequest = (e: Event) => {
+      if (!roomId) return;
+      const customEvent = e as CustomEvent;
+      const { playerId: targetPlayerId, playerName } = customEvent.detail;
+      
+      const activeMapId = roomConfig?.mapId || selectedMapId;
+      const mapCheckpoints = MAPS[activeMapId]?.checkpoints || [];
+      
+      if (mapCheckpoints.length === 0) {
+        alert("Bản đồ này không cấu hình checkpoint nào để dịch chuyển!");
+        return;
+      }
+
+      let promptMsg = `Dịch chuyển người chơi "${playerName}" đến checkpoint nào?\n`;
+      mapCheckpoints.forEach((cp, idx) => {
+        promptMsg += `- Nhập ${idx} để đưa tới Checkpoint #${idx + 1} (Tọa độ y: ${cp.y})\n`;
+      });
+
+      const choice = prompt(promptMsg);
+      if (choice === null) return; // Cancelled
+
+      const choiceIdx = parseInt(choice, 10);
+      if (isNaN(choiceIdx) || choiceIdx < 0 || choiceIdx >= mapCheckpoints.length) {
+        alert("Lựa chọn không hợp lệ!");
+        return;
+      }
+
+      const targetCP = mapCheckpoints[choiceIdx];
+      syncService.updatePlayer(roomId, targetPlayerId, {
+        teleportTarget: {
+          x: targetCP.x,
+          y: targetCP.y,
+          time: Date.now()
+        }
+      });
+    };
+
+    const handleLocalPlayerTeleported = (e: Event) => {
+      if (!roomId || !playerId) return;
+      const customEvent = e as CustomEvent;
+      const { x, y } = customEvent.detail;
+      
+      syncService.updatePlayer(roomId, playerId, {
+        teleportTarget: null,
+        x: x,
+        y: y,
+        vx: 0,
+        vy: 0
+      });
+    };
+
+    const handleCoinCollected = (e: Event) => {
+      if (!roomId || !playerId) return;
+      const customEvent = e as CustomEvent;
+      const { value } = customEvent.detail;
+      
+      const currentCoins = playersRef.current[playerId]?.coins || 0;
+      syncService.updatePlayer(roomId, playerId, {
+        coins: currentCoins + value
+      });
+    };
+
+    const handlePlayerLongFall = () => {
+      setFallQuote("Bạn đã trở thành nạn nhân của quy luật cạnh tranh khốc liệt");
+    };
+
     window.addEventListener('enter_checkpoint', handleEnterCP);
     window.addEventListener('leave_checkpoint', handleLeaveCP);
+    window.addEventListener('admin_teleport_request', handleAdminTeleportRequest);
+    window.addEventListener('local_player_teleported', handleLocalPlayerTeleported);
+    window.addEventListener('coin_collected', handleCoinCollected);
+    window.addEventListener('player_long_fall', handlePlayerLongFall);
 
     return () => {
       window.removeEventListener('enter_checkpoint', handleEnterCP);
       window.removeEventListener('leave_checkpoint', handleLeaveCP);
+      window.removeEventListener('admin_teleport_request', handleAdminTeleportRequest);
+      window.removeEventListener('local_player_teleported', handleLocalPlayerTeleported);
+      window.removeEventListener('coin_collected', handleCoinCollected);
+      window.removeEventListener('player_long_fall', handlePlayerLongFall);
     };
-  }, []);
+  }, [roomId, roomConfig, selectedMapId, playerId]);
 
   // Initialize Custom Firebase if saved
   useEffect(() => {
@@ -285,6 +373,8 @@ export default function App() {
     return () => clearInterval(timer);
   }, [screen, roomConfig, isHost, roomId]);
 
+
+
   // Listen to global key shortcuts for HUD and Respawn
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -309,6 +399,7 @@ export default function App() {
           setCheckpointQuizOpen(true);
         }
       }
+
     };
 
     // Keyboard listener for Phaser-triggered Respawn
@@ -323,7 +414,7 @@ export default function App() {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('kbd_respawn', handleKbdRespawn);
     };
-  }, [screen, currentCheckpointZoneId, activeCheckpointId, checkpointQuizOpen, showSettings, roomConfig]);
+  }, [screen, currentCheckpointZoneId, activeCheckpointId, checkpointQuizOpen, showSettings, roomConfig, hasFinished, roomId, playerId]);
 
   // Load Phaser game inside effect when screen changes to 'playing'
   useEffect(() => {
@@ -464,7 +555,8 @@ export default function App() {
       finishTime: 0,
       color: playerColor,
       isHost: true,
-      lastActive: Date.now()
+      lastActive: Date.now(),
+      coins: 0
     };
 
     const config: RoomConfig = {
@@ -535,7 +627,11 @@ export default function App() {
         height: 0,
         checkpointId: -1,
         isFinished: false,
-        finishTime: 0
+        finishTime: 0,
+        coins: 0,
+        shoeLevel: 0,
+        isFlying: false,
+        teleportTarget: null
       };
       
       // Update individual player nodes in Firebase or BroadcastChannel
@@ -651,7 +747,8 @@ export default function App() {
         color: playerColor,
         isHost: false,
         lastActive: Date.now(),
-        offline: false
+        offline: false,
+        coins: 0
       };
 
       try {
@@ -727,6 +824,28 @@ export default function App() {
     }
   };
 
+  const handleUpgradeShoes = () => {
+    if (isHost || screen !== 'playing' || hasFinished || !roomId || !playerId) return;
+    const currentCoins = playersRef.current[playerId]?.coins || 0;
+    const currentShoeLevel = playersRef.current[playerId]?.shoeLevel || 0;
+    
+    if (currentShoeLevel === 0 && currentCoins >= 30) {
+      syncService.updatePlayer(roomId, playerId, {
+        coins: currentCoins - 30,
+        shoeLevel: 1
+      });
+      const event = new CustomEvent('shoes_upgraded', { detail: { level: 1 } });
+      window.dispatchEvent(event);
+    } else if (currentShoeLevel === 1 && currentCoins >= 70) {
+      syncService.updatePlayer(roomId, playerId, {
+        coins: currentCoins - 70,
+        shoeLevel: 2
+      });
+      const event = new CustomEvent('shoes_upgraded', { detail: { level: 2 } });
+      window.dispatchEvent(event);
+    }
+  };
+
   const handleReachGoal = () => {
     if (hasFinished || !roomConfig) return;
 
@@ -744,10 +863,9 @@ export default function App() {
   };
 
   const handleSaveCheckpointSuccess = () => {
-    setActiveCheckpointId(quizCheckpointId);
     setCheckpointQuizOpen(false);
 
-    // Sync checkpoint index
+    setActiveCheckpointId(quizCheckpointId);
     if (roomId) {
       syncService.updatePlayer(roomId, playerId, {
         checkpointId: quizCheckpointId
@@ -819,6 +937,10 @@ export default function App() {
     return idx !== -1 ? idx + 1 : 1;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rankDependencies, playerId]);
+
+  const activePlayerId = isHost ? spectatedPlayerId : playerId;
+  const activeCoins = activePlayerId ? (players[activePlayerId]?.coins || 0) : 0;
+  const activeShoeLevel = activePlayerId ? (players[activePlayerId]?.shoeLevel || 0) : 0;
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-brand-dark flex items-center justify-center">
@@ -946,6 +1068,8 @@ export default function App() {
                 >
                   <option value="easy">Easy Climb (Dễ)</option>
                   <option value="hard">Apex Ascent (Khó)</option>
+                  <option value="nightmare">Nightmare Climb (Siêu Khó)</option>
+                  <option value="goingup">Going Up (Hành Trình Kinh Tế)</option>
                 </select>
               </div>
             </div>
@@ -1246,16 +1370,32 @@ export default function App() {
             isInCheckpointZone={currentCheckpointZoneId >= 0 && currentCheckpointZoneId > activeCheckpointId}
             onSaveCheckpointTrigger={handleSaveCheckpointTrigger}
             onToggleLeaderboard={() => setShowLeaderboardTab(prev => !prev)}
+            coins={activeCoins}
+            shoeLevel={activeShoeLevel}
+            onUpgradeShoes={handleUpgradeShoes}
           />
+
+          {/* Long Fall dramatic quote banner */}
+          {fallQuote && (
+            <div className="absolute bottom-60 left-1/2 -translate-x-1/2 bg-red-950/95 border border-red-500/40 text-red-200 px-6 py-3.5 rounded-2xl shadow-2xl text-xs md:text-sm font-black uppercase text-center select-none backdrop-blur-md animate-bounce max-w-md w-11/12 border-dashed z-40 tracking-wide">
+              ⚠️ {fallQuote}
+            </div>
+          )}
 
           {/* Goal Finish Splash Overlay */}
           {hasFinished && (
-            <div className="absolute top-1/4 left-1/2 -translate-x-1/2 bg-slate-900/90 border border-emerald-500/30 backdrop-blur-md px-6 py-4 rounded-2xl shadow-2xl flex flex-col items-center gap-2 text-center pointer-events-auto max-w-sm animate-slide-in">
-              <span className="text-[10px] font-black text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full tracking-widest uppercase">Thành công</span>
-              <h3 className="text-xl font-black text-slate-100">BẠN ĐÃ CÁN ĐÍCH!</h3>
-              <p className="text-xs text-slate-400">
-                Chúc mừng bạn đã chinh phục đỉnh núi với thời gian: <span className="font-mono font-bold text-amber-400">{Math.round(finishTime)} giây</span>.
+            <div className="absolute top-1/4 left-1/2 -translate-x-1/2 bg-slate-900/95 border border-emerald-500/30 backdrop-blur-md px-8 py-6 rounded-3xl shadow-2xl flex flex-col items-center gap-3.5 text-center pointer-events-auto max-w-md w-11/12 sm:w-[420px] animate-slide-in">
+              <span className="text-[10px] font-black text-emerald-400 bg-emerald-500/10 px-3 py-1 rounded-full tracking-widest uppercase border border-emerald-500/20">Thành công</span>
+              <h3 className="text-2xl font-black text-white tracking-wide">BẠN ĐÃ CÁN ĐÍCH!</h3>
+              <p className="text-sm text-slate-350 leading-relaxed px-2">
+                Chúc mừng bạn đã chinh phục đỉnh núi với thời gian: <span className="font-mono font-bold text-amber-400 whitespace-nowrap">{Math.round(finishTime)} giây</span>.
               </p>
+              
+              <div className="flex items-center gap-2 bg-yellow-500/10 border border-yellow-500/20 px-4 py-2.5 rounded-2xl text-yellow-400 font-extrabold text-sm my-1 animate-pulse">
+                <Coins size={16} className="text-yellow-400 animate-pulse" />
+                <span>Tổng số xu đã thu thập: {activeCoins} xu</span>
+              </div>
+              
               <span className="text-[10px] text-slate-500 italic mt-1">Bạn có thể tiếp tục xem người khác leo hoặc rời phòng.</span>
             </div>
           )}

@@ -19,6 +19,10 @@ export interface PlayerState {
   isHost: boolean;
   lastActive: number;
   offline?: boolean;
+  teleportTarget?: { x: number; y: number; time: number } | null;
+  coins: number;
+  isFlying?: boolean;
+  shoeLevel?: number;
 }
 
 export interface RoomConfig {
@@ -44,6 +48,34 @@ export interface PlatformConfig {
   width: number;
   height: number;
   color?: string;
+  isCollapsing?: boolean;
+  isSlippery?: boolean;
+  isBooster?: boolean;
+}
+
+export interface MovingPlatformConfig {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  color?: string;
+  startX?: number;
+  endX?: number;
+  startY?: number;
+  endY?: number;
+  speed: number;
+}
+
+export interface MonsterConfig {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  color?: string;
+  startX: number;
+  endX: number;
+  speed: number;
+  knockbackForce?: number;
 }
 
 export interface MapConfig {
@@ -54,6 +86,8 @@ export interface MapConfig {
   spawnX: number;
   spawnY: number;
   platforms: PlatformConfig[];
+  movingPlatforms?: MovingPlatformConfig[];
+  monsters?: MonsterConfig[];
   checkpoints: CheckpointConfig[];
   goal: {
     x: number;
